@@ -21,27 +21,32 @@ public class PlayerMovement : MonoBehaviour {
     private bool collidedLeft = false;
     private bool collidedUp = false;
     
-    [SerializeField] private BoxCollider2D playerCollider;
+    [SerializeField] private Bounds playerBounds;
     
     // Start is called before the first frame update
     void Start() {
         vel = new Vector2(0,0);
     }
+    
+    private bool _active;
+    void Awake() => Invoke(nameof(Activate), 0.5f);
+    void Activate() =>  _active = true;
 
     // Update is called once per frame
     void Update() {
+        if(!_active) return;
         checkCollisions();
         move();
     }
     
     [SerializeField] private LayerMask ground;
-    private float collidedCheckRange = 0.1f;
+    private float collidedCheckRange = 0.01f;
     
     void checkCollisions(){
-        collidedDown = Physics2D.BoxCast(playerCollider.bounds.center, playerCollider.bounds.size, 0f, Vector2.down, collidedCheckRange, ground);
-        collidedUp = Physics2D.BoxCast(playerCollider.bounds.center, playerCollider.bounds.size, 0f, Vector2.up, collidedCheckRange, ground);
-        collidedLeft = Physics2D.BoxCast(playerCollider.bounds.center, playerCollider.bounds.size, 0f, Vector2.left, collidedCheckRange, ground);
-        collidedRight = Physics2D.BoxCast(playerCollider.bounds.center, playerCollider.bounds.size, 0f, Vector2.right, collidedCheckRange, ground);
+        collidedDown = Physics2D.OverlapBox(playerBounds.center+transform.position+Vector3.down*collidedCheckRange, playerBounds.size, 0f, ground);
+        collidedUp = Physics2D.OverlapBox(playerBounds.center+transform.position+Vector3.up*collidedCheckRange, playerBounds.size, 0f, ground);
+        collidedLeft = Physics2D.OverlapBox(playerBounds.center+transform.position+Vector3.left*collidedCheckRange, playerBounds.size, 0f, ground);
+        collidedRight = Physics2D.OverlapBox(playerBounds.center+transform.position+Vector3.right*collidedCheckRange, playerBounds.size, 0f, ground);
         
         // check if just left ground
         if(isGrounded && !collidedDown) lastGrounded = Time.time;
@@ -55,7 +60,6 @@ public class PlayerMovement : MonoBehaviour {
         calcHorizontal();
         calcGravity();
         calcJump();
-        // vel.y = -1;
         calcLatestCollision();
     }
     
@@ -85,93 +89,63 @@ public class PlayerMovement : MonoBehaviour {
         vel.x = Mathf.Clamp(vel.x, -maxHorizontalSpeed, maxHorizontalSpeed);
         
         // stop if colliding
-        if((collidedLeft && vel.x < 0)||(collidedRight && vel.y > 0)) vel.x = 0;
+        if((collidedLeft && vel.x < 0)||(collidedRight && vel.x > 0)) vel.x = 0;
     }
     
     public float maxFallSpeed = 10f;
-    public float gravity = -0.01f;
+    public float gravity = -20f;
     
     void calcGravity(){
         if(!collidedDown){
             vel.y += gravity*Time.deltaTime;
-            vel.y = Mathf.Min(vel.y, -maxFallSpeed);
+            vel.y = Mathf.Max(vel.y, -maxFallSpeed);
         }
         if(collidedDown && vel.y < 0) vel.y = 0;
     }
     
     
     void calcJump(){
-        if(!Input.GetKey("space")) return;
-        // if(!(isGrounded || (Time.time-lastGrounded < coyoteBufferTime)&&allowCoyote)) return;
+        if(!Input.GetKey("up")) return;
+        if(!(isGrounded || (Time.time-lastGrounded < coyoteBufferTime)&&allowCoyote)) return;
         allowCoyote = false;
         vel.y = 10;
         
         if(collidedUp && vel.y > 0) vel.y = 0;
     }
     
-    private float collisionBuffer = 0.01f;
-    private int maxIterationSteps = 20;
+    private int maxIterationSteps = 10;
     
     void calcLatestCollision(){
         if(vel.magnitude == 0) return;
         
         var moveStep = vel*Time.deltaTime;
-        var pos = playerCollider.bounds.center;
+        var pos = playerBounds.center+transform.position;
         var endPos = pos + moveStep;
-        var hasCollision = Physics2D.OverlapBox(endPos, playerCollider.bounds.size, 0, ground);
-        if(!hasCollision){
+        var hasCollision = Physics2D.OverlapBox(endPos, playerBounds.size, 0, ground);
+        if(hasCollision == null){
             transform.position += moveStep;
             return;
         }
-        
-        
-        // var moveStep = vel*Time.deltaTime;
-        // var hasCollision = Physics2D.BoxCast(playerCollider.bounds.center, playerCollider.bounds.size, 0f, moveStep, moveStep.magnitude+collisionBuffer, ground);
-        // if(!hasCollision){
-        //     transform.position += moveStep;
-        //     return;
-        // }
-        // Vector3 startPos = new Vector3(0,0,0);
-        // Vector3 endPos = moveStep;
-        // var lastNonCollidedPos = startPos;
-        // for(int i = 0;i < maxIterationSteps;i++){
-        //     var checkPos = Vector3.Lerp(startPos, endPos,(float)i/maxIterationSteps);
-        //     if(Physics2D.OverlapBox(checkPos+playerCollider.bounds.center, playerCollider.bounds.size, 0, ground)) break;
-        //     lastNonCollidedPos = checkPos;
-        // }
-        // transform.position += lastNonCollidedPos;
-        
-        
-        // Debug.Log("Found Collision!");
-        // Debug.Log(moveStep);
-        // // if there is collision find earliest non colliding position
-        // var lastNonCollidingDist = 0f;
-        // var currentStep = moveStep.magnitude/2;
-        // var checkDist = 0f;
-        // for(var i = 0;i < maxIterationSteps;i++){
-        //     if(Physics2D.BoxCast(playerCollider.bounds.center, playerCollider.bounds.size, 0f, moveStep, checkDist+collisionBuffer, ground)){
-        //         Debug.Log("has Collision!");
-        //         checkDist -= currentStep;
-        //     }else{
-        //         Debug.Log("no Collision!");
-        //         lastNonCollidingDist = checkDist;
-        //         checkDist += currentStep;
-        //     }
-        //     currentStep /= 2;
-        // }
-        // moveStep.Normalize();
-        // moveStep = moveStep*lastNonCollidingDist;
-        // transform.position += moveStep;
+        var lastValid = 0f;
+        var currentPercentage = 0.5f;
+        var nextStep = 0.25f;
+        for(var i = 0;i < maxIterationSteps;i++){
+            var posToTest = Vector3.Lerp(pos, endPos, currentPercentage);
+            var collided = Physics2D.OverlapBox(endPos, playerBounds.size, 0, ground);
+            if(collided) currentPercentage -= nextStep;
+            else{
+                lastValid = currentPercentage;
+                currentPercentage += nextStep;
+            }
+            nextStep /= 2;
+        }
+        moveStep.Normalize();
+        transform.position += moveStep*currentPercentage;
     }
     
     void OnDrawGizmos(){
-        Gizmos.color = Color.blue;
-        drawRect(GetComponent<BoxCollider2D>().bounds.center+Vector3.down*collidedCheckRange, GetComponent<BoxCollider2D>().bounds.size);
-        drawRect(GetComponent<BoxCollider2D>().bounds.center+Vector3.up*collidedCheckRange, GetComponent<BoxCollider2D>().bounds.size);
-        drawRect(GetComponent<BoxCollider2D>().bounds.center+Vector3.left*collidedCheckRange, GetComponent<BoxCollider2D>().bounds.size);
-        drawRect(GetComponent<BoxCollider2D>().bounds.center+Vector3.right*collidedCheckRange, GetComponent<BoxCollider2D>().bounds.size);
         Gizmos.color = Color.red;
-        drawRect(GetComponent<BoxCollider2D>().bounds.center, GetComponent<BoxCollider2D>().bounds.size);
+        drawRect(playerBounds.center+transform.position, playerBounds.size);
     }
     
     void drawRect(Vector3 center, Vector3 size){
